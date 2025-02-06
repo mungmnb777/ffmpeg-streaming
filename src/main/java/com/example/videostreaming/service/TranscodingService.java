@@ -89,8 +89,7 @@ public class TranscodingService {
             masterPlaylist.append(String.format("%s/master.m3u8\n", quality));
         }
 
-        // 마스터 플레이리스트 파일을 영상 디렉토리에 작성
-        File masterFile = new File(videosDir + videoId + "/master.m3u8");
+        File masterFile = new File(videosDir + File.separator + videoId + File.separator + "master.m3u8");
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(masterFile))) {
             writer.write(masterPlaylist.toString());
         } catch (IOException e) {
