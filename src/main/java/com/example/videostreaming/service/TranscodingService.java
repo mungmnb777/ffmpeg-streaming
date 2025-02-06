@@ -15,28 +15,24 @@ public class TranscodingService {
     private String videosDir;
 
     public void transcodeVideo(File inputFile, VideoMetadata metadata) {
-        // 영상의 원본 해상도에 따라 제공할 품질 리스트 결정
         List<String> qualities = determineQualities(metadata);
 
-        // 결정된 각 품질에 대해 트랜스코딩 실행
         for (String quality : qualities) {
             transcodeForQuality(inputFile, metadata.getVideoId(), quality);
         }
 
-        // 적응형 스트리밍을 위한 마스터 플레이리스트 생성
         generateMasterPlaylist(metadata.getVideoId(), qualities);
     }
 
     private List<String> determineQualities(VideoMetadata metadata) {
         List<String> qualities = new ArrayList<>();
-        // 480p는 항상 포함 (예외적으로 아무리 낮은 해상도라도 제공)
+
         qualities.add("480p");
 
-        // 원본 해상도가 720p 이상이면 720p 제공
         if (metadata.getHeight() >= 720) {
             qualities.add("720p");
         }
-        // 원본 해상도가 1080p 이상이면 1080p 제공
+
         if (metadata.getHeight() >= 1080) {
             qualities.add("1080p");
         }
@@ -44,16 +40,13 @@ public class TranscodingService {
     }
 
     private void transcodeForQuality(File inputFile, String videoId, String quality) {
-        // 품질별 목표 해상도 결정
         String resolution = getResolutionForQuality(quality);
 
-        // 출력 디렉토리 생성 (예: videos/{videoId}/480p)
         File outputDir = new File(videosDir + File.separator + videoId + File.separator + quality);
         if (!outputDir.exists()) {
             outputDir.mkdirs();
         }
 
-        // FFmpeg 명령어 작성 (간략화된 예제)
         String command = String.format("ffmpeg -i %s -vf scale=%s -hls_time 10 -hls_playlist_type vod %s/master.m3u8",
                 inputFile.getAbsolutePath(), resolution, outputDir.getAbsolutePath());
 
@@ -84,7 +77,6 @@ public class TranscodingService {
             }
             process.waitFor();
         } catch (IOException | InterruptedException e) {
-            // 실제 서비스에서는 적절한 로깅 및 에러 핸들링이 필요함
             throw new RuntimeException("트랜스코딩 중 에러 발생", e);
         }
     }
@@ -92,7 +84,6 @@ public class TranscodingService {
     private void generateMasterPlaylist(String videoId, List<String> qualities) {
         StringBuilder masterPlaylist = new StringBuilder("#EXTM3U\n");
         for (String quality : qualities) {
-            // BANDWIDTH 및 RESOLUTION 정보는 예제이므로 실제 환경에 맞게 조정 필요
             masterPlaylist.append(String.format("#EXT-X-STREAM-INF:BANDWIDTH=%s,RESOLUTION=%s\n",
                     getBandwidth(quality), getResolutionForQuality(quality)));
             masterPlaylist.append(String.format("%s/master.m3u8\n", quality));

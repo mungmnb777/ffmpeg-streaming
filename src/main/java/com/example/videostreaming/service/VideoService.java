@@ -14,6 +14,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -50,29 +51,46 @@ public class VideoService {
     }
 
     private VideoMetadata extractMetadata(File file) throws IOException {
-        List<String> command = new ArrayList<>();
-        command.add("ffprobe");
-        command.add("-v");
-        command.add("quiet");
-        command.add("-print_format");
-        command.add("json");
-        command.add("-show_format");
-        command.add("-show_streams");
-        command.add(file.getAbsolutePath());
+        String command = String.format(
+                "ffprobe -v quiet -print_format json -show_format -show_streams %s",
+                file.getAbsolutePath());
+        String output = runCommand(command);
+        JsonNode probeResult = objectMapper.readTree(output);
 
-        ProcessBuilder pb = new ProcessBuilder(command);
-        Process process = pb.start();
-
-        // ffprobe 출력 결과 읽기
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-            }
+        // 비디오 스트림 찾기
+        JsonNode videoStream = findVideoStream(probeResult.get("streams"));
+        if (videoStream == null) {
+            throw new IllegalArgumentException("비디오 스트림이 없습니다.");
         }
 
-        // 프로세스 종료 대기
+        JsonNode format = probeResult.get("format");
+        VideoMetadata metadata = new VideoMetadata();
+        metadata.setWidth(videoStream.get("width").asInt());
+        metadata.setHeight(videoStream.get("height").asInt());
+        metadata.setCodec(videoStream.get("codec_name").asText());
+        metadata.setDuration(format.get("duration").asDouble());
+        metadata.setBitrate(getLongValue(format.get("bit_rate")));
+        metadata.setFrameRate(parseFrameRate(videoStream.get("r_frame_rate").asText()));
+        metadata.setRotation(getRotation(videoStream.get("tags")));
+
+        return metadata;
+    }
+
+    /**
+     * 주어진 명령어를 실행하고 출력을 반환한다.
+     *
+     * @param command 실행할 명령어 문자열
+     * @return 명령어 실행 결과 출력 문자열
+     * @throws IOException 실행 실패 또는 인터럽트 발생 시 예외 발생
+     */
+    private String runCommand(String command) throws IOException {
+        ProcessBuilder pb = new ProcessBuilder(command.split(" "));
+        Process process = pb.start();
+
+        String output = new BufferedReader(
+                new InputStreamReader(process.getInputStream()))
+                .lines().collect(Collectors.joining("\n"));
+
         try {
             int exitCode = process.waitFor();
             if (exitCode != 0) {
@@ -82,67 +100,73 @@ public class VideoService {
             Thread.currentThread().interrupt();
             throw new IOException("FFprobe 인터럽트 발생", e);
         }
+        return output;
+    }
 
-        JsonNode probeResult = objectMapper.readTree(output.toString());
-
-        // 비디오 스트림 찾기
-        JsonNode videoStream = null;
-        JsonNode streams = probeResult.get("streams");
+    /**
+     * FFprobe의 streams 배열에서 첫 번째 비디오 스트림을 찾는다.
+     *
+     * @param streams FFprobe가 반환한 streams JsonNode 배열
+     * @return 비디오 스트림 JsonNode 또는 없으면 null
+     */
+    private JsonNode findVideoStream(JsonNode streams) {
         for (JsonNode stream : streams) {
             if ("video".equals(stream.get("codec_type").asText())) {
-                videoStream = stream;
-                break;
+                return stream;
             }
         }
+        return null;
+    }
 
-        if (videoStream == null) {
-            throw new IllegalArgumentException("비디오 스트림이 없습니다.");
-        }
-
-        JsonNode format = probeResult.get("format");
-
-        VideoMetadata metadata = new VideoMetadata();
-
-        // 기본 메타데이터 설정
-        metadata.setWidth(videoStream.get("width").asInt());
-        metadata.setHeight(videoStream.get("height").asInt());
-
-        // 추가 메타데이터 설정
-        metadata.setCodec(videoStream.get("codec_name").asText());
-        metadata.setDuration(format.get("duration").asDouble());
-
-        // bit_rate가 문자열로 되어있을 수 있으므로 처리
-        JsonNode bitRateNode = format.get("bit_rate");
-        if (bitRateNode != null && !bitRateNode.isNull()) {
-            try {
-                metadata.setBitrate(bitRateNode.asLong());
-            } catch (NumberFormatException e) {
-                metadata.setBitrate(0);
-            }
-        }
-
-        // 프레임레이트 계산 (r_frame_rate는 "24000/1001"과 같은 형식)
-        String frameRate = videoStream.get("r_frame_rate").asText();
+    /**
+     * 주어진 프레임 레이트 문자열("num/den")을 파싱하여 FPS를 계산한다.
+     *
+     * @param frameRate 프레임 레이트 문자열
+     * @return 계산된 FPS 값 또는 파싱 실패 시 0.0
+     */
+    private double parseFrameRate(String frameRate) {
         try {
             String[] parts = frameRate.split("/");
             if (parts.length == 2) {
-                double fps = Double.parseDouble(parts[0]) / Double.parseDouble(parts[1]);
-                metadata.setFrameRate(fps);
+                return Double.parseDouble(parts[0]) / Double.parseDouble(parts[1]);
             }
-        } catch (NumberFormatException | ArithmeticException e) {
-            metadata.setFrameRate(0.0);
+        } catch (Exception e) {
+            // 파싱 실패 시 0.0 반환
         }
+        return 0.0;
+    }
 
-        // 회전 정보 확인
-        JsonNode tags = videoStream.get("tags");
+    /**
+     * 주어진 JsonNode에서 long 값을 추출한다.
+     *
+     * @param node 추출할 JsonNode
+     * @return 값이 있으면 long 값, 없으면 0
+     */
+    private long getLongValue(JsonNode node) {
+        if (node != null && !node.isNull()) {
+            try {
+                return node.asLong();
+            } catch (NumberFormatException e) {
+                // 파싱 실패 시 0 반환
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * 태그(JsonNode) 내의 rotate 값을 정수로 추출한다.
+     *
+     * @param tags 비디오 스트림의 태그 JsonNode
+     * @return 회전 값, 없거나 파싱 실패 시 0
+     */
+    private int getRotation(JsonNode tags) {
         if (tags != null && tags.has("rotate")) {
             try {
-                metadata.setRotation(tags.get("rotate").asInt());
+                return tags.get("rotate").asInt();
             } catch (NumberFormatException e) {
-                metadata.setRotation(0);
+                // 파싱 실패 시 0 반환
             }
         }
-
-        return metadata;
+        return 0;
     }
 }
