@@ -58,7 +58,7 @@ public class TranscodingService {
         return switch (quality) {
             case "720p" -> "1280:720";
             case "1080p" -> "1920:1080";
-            default -> "640:480";
+            default -> "854:480";
         };
     }
 
