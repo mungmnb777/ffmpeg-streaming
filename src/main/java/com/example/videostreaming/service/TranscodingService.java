@@ -84,8 +84,8 @@ public class TranscodingService {
     private void generateMasterPlaylist(String videoId, List<String> qualities) {
         StringBuilder masterPlaylist = new StringBuilder("#EXTM3U\n");
         for (String quality : qualities) {
-            masterPlaylist.append(String.format("#EXT-X-STREAM-INF:BANDWIDTH=%s,RESOLUTION=%s\n",
-                    getBandwidth(quality), getResolutionForQuality(quality)));
+            masterPlaylist.append(String.format("#EXT-X-STREAM-INF:BANDWIDTH=%s,RESOLUTION=%s,QUALITY=%s\n",
+                    getBandwidth(quality), getResolutionForQuality(quality), quality));
             masterPlaylist.append(String.format("%s/master.m3u8\n", quality));
         }
 
